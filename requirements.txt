@@ -3,3 +3,6 @@ numpy
 streamlit
 streamlit-webrtc
 transformers
+av
+pydub
+
