@@ -1,6 +1,5 @@
 faster-whisper
-sounddevice
 numpy
-librosa
-gradio
+streamlit
+streamlit-webrtc
 transformers
