@@ -4,6 +4,7 @@ import queue
 import threading
 from faster_whisper import WhisperModel
 from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode
+import av
 
 # ---------------- Configuration ----------------
 samplerate = 16000
@@ -21,7 +22,7 @@ stop_flag = threading.Event()
 
 # ---------------- Load Whisper ----------------
 model = WhisperModel(
-    "medium.en", device="cpu", compute_type="int8"
+    "small.en", device="cpu", compute_type="int8"
 )
 
 def is_speech(audio_chunk, threshold=0.01):
@@ -31,9 +32,9 @@ def is_speech(audio_chunk, threshold=0.01):
 
 # ---------------- Audio Callback ----------------
 class AudioProcessor(AudioProcessorBase):
-    def recv_audio_frame(self, frame):
-        audio = frame.to_ndarray().astype(np.float32) / 32768.0
-        audio_queue.put(audio[:, 0].copy())  # mono
+    def recv_audio_frame(self, frame: av.AudioFrame) -> av.AudioFrame:
+        audio = frame.to_ndarray()
+        st.write(f"Got audio frame with shape: {audio.shape}")
         return frame
 
 # ---------------- Recorder ----------------
@@ -103,3 +104,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
