@@ -1,9 +1,9 @@
-import sounddevice as sd
+import streamlit as st
 import numpy as np
 import queue
 import threading
 from faster_whisper import WhisperModel
-
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode
 
 # ---------------- Configuration ----------------
 samplerate = 16000
@@ -21,40 +21,36 @@ stop_flag = threading.Event()
 
 # ---------------- Load Whisper ----------------
 model = WhisperModel(
-    "tiny.en", device="cpu", compute_type="int8"
-)  # smaller model for CPU
-
+    "medium.en", device="cpu", compute_type="int8"
+)
 
 def is_speech(audio_chunk, threshold=0.01):
     """Return True if chunk contains speech, False if mostly silence."""
     rms = np.sqrt(np.mean(audio_chunk**2))
     return rms > threshold
 
-
 # ---------------- Audio Callback ----------------
-def audio_callback(indata, frames, time, status):
-    if status:
-        print(f"⚠️ {status}")
-    # convert block to 1D immediately
-    audio_queue.put(indata[:, 0].copy())
-
+class AudioProcessor(AudioProcessorBase):
+    def recv_audio_frame(self, frame):
+        audio = frame.to_ndarray().astype(np.float32) / 32768.0
+        audio_queue.put(audio[:, 0].copy())  # mono
+        return frame
 
 # ---------------- Recorder ----------------
 def recorder():
-    with sd.InputStream(
-        samplerate=samplerate,
-        channels=channels,
-        callback=audio_callback,
-        blocksize=frames_per_block,
-    ):
-        print("🎙️ Listening... Press Ctrl+C to stop.")
-        while not stop_flag.is_set():
-            sd.sleep(100)
-
+    # Browser mic → queue (continuous)
+    webrtc_streamer(
+        key="speech",
+        mode=WebRtcMode.SENDONLY,
+        audio_processor_factory=AudioProcessor,
+        media_stream_constraints={"audio": True, "video": False},
+    )
 
 # ---------------- Transcriber ----------------
 def transcriber():
     global audio_buffer
+    last_text = ""
+
     while not stop_flag.is_set():
         try:
             block = audio_queue.get(timeout=1)
@@ -78,26 +74,32 @@ def transcriber():
                 segments, _ = model.transcribe(
                     audio_chunk, language="en", beam_size=3, temperature=0.0
                 )
-                last_text = ""
                 for segment in segments:
                     if segment.text != last_text:
-                        print(segment.text, end=" ", flush=True)
+                        st.write(segment.text)
                         last_text = segment.text
-            else:
-                pass
 
+            # Keep overlap buffer
             keep_frames = int(samplerate * 0.25)
             if len(audio_chunk) > keep_frames:
                 audio_buffer = [audio_chunk[-keep_frames:]]
             else:
                 audio_buffer = [audio_chunk]
 
-
 # ---------------- Main ----------------
-if __name__ == "__main__":
-    try:
-        threading.Thread(target=recorder, daemon=True).start()
-        transcriber()
-    except KeyboardInterrupt:
+def main():
+    st.title("🎙️ Live Speech-to-Text with Whisper")
+    st.write("Speak into your mic and see live transcription below:")
+
+    recorder()
+
+    if st.button("Start Transcription"):
+        stop_flag.clear()
+        threading.Thread(target=transcriber, daemon=True).start()
+
+    if st.button("Stop"):
         stop_flag.set()
-        print("\n🛑 Stopped by user.")
+        st.write("🛑 Transcription stopped.")
+
+if __name__ == "__main__":
+    main()
