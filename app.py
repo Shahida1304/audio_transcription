@@ -21,9 +21,7 @@ audio_buffer = []
 stop_flag = threading.Event()
 
 # ---------------- Load Whisper ----------------
-model = WhisperModel(
-    "small.en", device="cpu", compute_type="int8"
-)
+model = WhisperModel("small.en", device="cpu", compute_type="int8")
 
 def is_speech(audio_chunk, threshold=0.01):
     """Return True if chunk contains speech, False if mostly silence."""
@@ -33,8 +31,13 @@ def is_speech(audio_chunk, threshold=0.01):
 # ---------------- Audio Callback ----------------
 class AudioProcessor(AudioProcessorBase):
     def recv_audio_frame(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray()
-        st.write(f"Got audio frame with shape: {audio.shape}")
+        # Convert frame → numpy (float32)
+        audio = frame.to_ndarray().astype(np.float32) / 32768.0  # normalize int16 → float32
+        audio = audio.flatten()
+
+        # Push audio block into queue
+        audio_queue.put(audio)
+
         return frame
 
 # ---------------- Recorder ----------------
@@ -67,17 +70,14 @@ def transcriber():
             leftover = audio_data[frames_per_chunk:]
             audio_buffer = [leftover] if len(leftover) > 0 else []
 
-            # convert to float32
-            audio_chunk = audio_chunk.astype(np.float32)
-
-            # Transcribe
+            # Transcribe only if speech
             if is_speech(audio_chunk):
                 segments, _ = model.transcribe(
                     audio_chunk, language="en", beam_size=3, temperature=0.0
                 )
                 for segment in segments:
                     if segment.text != last_text:
-                        st.write(segment.text)
+                        st.write("📝 " + segment.text)
                         last_text = segment.text
 
             # Keep overlap buffer
