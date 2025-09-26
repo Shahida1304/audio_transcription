@@ -6,49 +6,23 @@ from faster_whisper import WhisperModel
 from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode
 import av
 
-# ---------------- Configuration ----------------
+# ---------------- Config ----------------
 samplerate = 16000
-block_duration = 0.5
 chunk_duration = 3.0
-channels = 1
-
-frames_per_block = int(samplerate * block_duration)
 frames_per_chunk = int(samplerate * chunk_duration)
-
 audio_queue = queue.Queue()
 audio_buffer = []
-
 stop_flag = threading.Event()
 
-# ---------------- Load Whisper ----------------
+# ---------------- Load Model ----------------
 model = WhisperModel("small.en", device="cpu", compute_type="int8")
 
-def is_speech(audio_chunk, threshold=0.01):
-    """Return True if chunk contains speech, False if mostly silence."""
-    rms = np.sqrt(np.mean(audio_chunk**2))
-    return rms > threshold
-
-# ---------------- Audio Callback ----------------
+# ---------------- Audio Processor ----------------
 class AudioProcessor(AudioProcessorBase):
     def recv_audio_frame(self, frame: av.AudioFrame) -> av.AudioFrame:
-        # Convert frame → numpy (float32)
-        audio = frame.to_ndarray().astype(np.float32) / 32768.0  # normalize int16 → float32
-        audio = audio.flatten()
-
-        # Push audio block into queue
-        audio_queue.put(audio)
-
+        audio = frame.to_ndarray().astype(np.float32) / 32768.0
+        audio_queue.put(audio[:, 0].copy())  # mono
         return frame
-
-# ---------------- Recorder ----------------
-def recorder():
-    # Browser mic → queue (continuous)
-    webrtc_streamer(
-        key="speech",
-        mode=WebRtcMode.SENDONLY,
-        audio_processor_factory=AudioProcessor,
-        media_stream_constraints={"audio": True, "video": False},
-    )
 
 # ---------------- Transcriber ----------------
 def transcriber():
@@ -70,17 +44,16 @@ def transcriber():
             leftover = audio_data[frames_per_chunk:]
             audio_buffer = [leftover] if len(leftover) > 0 else []
 
-            # Transcribe only if speech
-            if is_speech(audio_chunk):
+            if np.sqrt(np.mean(audio_chunk**2)) > 0.01:
                 segments, _ = model.transcribe(
                     audio_chunk, language="en", beam_size=3, temperature=0.0
                 )
                 for segment in segments:
                     if segment.text != last_text:
-                        st.write("📝 " + segment.text)
+                        st.write(segment.text)
                         last_text = segment.text
 
-            # Keep overlap buffer
+            # Keep overlap
             keep_frames = int(samplerate * 0.25)
             if len(audio_chunk) > keep_frames:
                 audio_buffer = [audio_chunk[-keep_frames:]]
@@ -88,20 +61,18 @@ def transcriber():
                 audio_buffer = [audio_chunk]
 
 # ---------------- Main ----------------
-def main():
-    st.title("🎙️ Live Speech-to-Text with Whisper")
-    st.write("Speak into your mic and see live transcription below:")
+st.title("🎙️ Live Speech-to-Text with Whisper")
+st.write("Allow mic and start speaking...")
 
-    recorder()
+# Start WebRTC component (browser mic)
+webrtc_ctx = webrtc_streamer(
+    key="speech",
+    mode=WebRtcMode.SENDONLY,
+    audio_processor_factory=AudioProcessor,
+    media_stream_constraints={"audio": True, "video": False},
+)
 
-    if st.button("Start Transcription"):
-        stop_flag.clear()
-        threading.Thread(target=transcriber, daemon=True).start()
-
-    if st.button("Stop"):
-        stop_flag.set()
-        st.write("🛑 Transcription stopped.")
-
-if __name__ == "__main__":
-    main()
-
+# Start transcription thread automatically
+if not stop_flag.is_set():
+    stop_flag.clear()
+    threading.Thread(target=transcriber, daemon=True).start()
