@@ -5,4 +5,5 @@ streamlit-webrtc
 transformers
 av
 pydub
-
+torch
+torchaudio
