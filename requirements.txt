@@ -3,9 +3,11 @@ numpy
 transformers
 av
 pydub
-torch
 torchaudio
-streamlit==1.37.0
-streamlit-webrtc==0.47.7
+streamlit==1.39.0
+openai-whisper==20231117
+streamlit-mic-recorder==0.0.4
+torch>=2.0.0
+
 
 
