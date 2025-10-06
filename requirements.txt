@@ -1,13 +1,12 @@
-faster-whisper
+streamlit==1.39.0
+faster-whisper==0.6.2
 numpy
-transformers
 av
 pydub
-torchaudio
-streamlit==1.39.0
-openai-whisper==20231117
+torch==2.1.0
 streamlit-mic-recorder==0.0.4
-torch>=2.0.0
+
+
 
 
 
