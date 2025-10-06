@@ -1,10 +1,11 @@
 faster-whisper
 numpy
-streamlit
-streamlit-webrtc
 transformers
 av
 pydub
 torch
 torchaudio
+streamlit==1.37.0
+streamlit-webrtc==0.47.7
+
 
