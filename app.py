@@ -1,78 +1,42 @@
 import streamlit as st
-from faster_whisper import WhisperModel
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, AudioProcessorBase
-import numpy as np
-import av
-import queue
-import threading
-import time
+import whisper
+import tempfile
+import os
+from streamlit_mic_recorder import mic_recorder
 
-st.set_page_config(page_title="🎙️ Live Whisper Transcription", layout="centered")
-st.title("🗣️ Real-Time Speech-to-Text using Whisper")
+st.set_page_config(page_title="🎙️ Whisper Audio Transcriber", layout="centered")
+st.title("🎧 Live Audio Transcription (Record then Transcribe)")
 
-# ---------------- Load Whisper ----------------
+# Load model from Hugging Face or local (whisper small)
 @st.cache_resource
 def load_model():
-    return WhisperModel("small.en", device="cpu", compute_type="int8")
+    return whisper.load_model("small")  # choose 'base', 'small', 'medium', etc.
 
 model = load_model()
 
-
-# ---------------- Audio Processor ----------------
-class AudioProcessor(AudioProcessorBase):
-    def __init__(self):
-        self.audio_buffer = queue.Queue()
-        self.transcript = ""
-        self.running = True
-        self.thread = threading.Thread(target=self._transcribe_loop, daemon=True)
-        self.thread.start()
-
-    def recv_audio_frame(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().astype(np.float32).flatten() / 32768.0
-        self.audio_buffer.put(audio)
-        return frame
-
-    def _transcribe_loop(self):
-        chunk_size = 16000 * 4  # 4 seconds
-        audio_accum = np.array([], dtype=np.float32)
-
-        while self.running:
-            try:
-                block = self.audio_buffer.get(timeout=1)
-                audio_accum = np.concatenate((audio_accum, block))
-                if len(audio_accum) >= chunk_size:
-                    chunk = audio_accum[:chunk_size]
-                    audio_accum = audio_accum[chunk_size:]
-                    segments, _ = model.transcribe(chunk, beam_size=1)
-                    text = " ".join([s.text for s in segments])
-                    if text.strip():
-                        self.transcript += " " + text
-            except queue.Empty:
-                continue
-
-    def get_text(self):
-        return self.transcript
-
-
-# ---------------- Streamlit UI ----------------
-ctx = webrtc_streamer(
-    key="speech",
-    mode=WebRtcMode.SENDRECV,
-    audio_receiver_size=256,
-    media_stream_constraints={"audio": True, "video": False},
-    audio_processor_factory=AudioProcessor,
-    async_processing=True,
+# Record audio
+st.subheader("Step 1: Record your voice")
+audio = mic_recorder(
+    start_prompt="🎤 Start Recording",
+    stop_prompt="⏹️ Stop Recording",
+    just_once=True,
+    use_container_width=True,
 )
 
-# Avoid running before context initializes
-if ctx.state.playing and ctx.audio_processor:
-    st.markdown("🎤 **Listening... start speaking!**")
-    placeholder = st.empty()
+if audio:
+    st.audio(audio['bytes'], format="audio/wav")
 
-    # Safe continuous update loop using Streamlit events
-    while ctx.state.playing:
-        time.sleep(1.5)
-        transcript = ctx.audio_processor.get_text()
-        placeholder.markdown(f"**Transcript:** {transcript}")
-else:
-    st.info("Click **Start** above and allow microphone access.")
+    # Save temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+        temp_audio.write(audio['bytes'])
+        temp_audio_path = temp_audio.name
+
+    st.subheader("Step 2: Transcribe your audio")
+    if st.button(" Transcribe Now"):
+        with st.spinner("Transcribing... please wait ⏳"):
+            result = model.transcribe(temp_audio_path)
+            st.success(" Transcription Complete!")
+            st.text_area("Transcribed Text:", result["text"], height=200)
+        
+        # cleanup
+        os.remove(temp_audio_path)
