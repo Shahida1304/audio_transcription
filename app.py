@@ -1,42 +1,51 @@
 import streamlit as st
-import whisper
+from faster_whisper import WhisperModel
 import tempfile
+import numpy as np
 import os
+from pydub import AudioSegment
 from streamlit_mic_recorder import mic_recorder
 
 st.set_page_config(page_title="🎙️ Whisper Audio Transcriber", layout="centered")
-st.title("🎧 Live Audio Transcription (Record then Transcribe)")
+st.title("🎧 Record and Transcribe Audio (Cloud-Friendly)")
 
-# Load model from Hugging Face or local (whisper small)
+# ---------------- Load Whisper once ----------------
 @st.cache_resource
 def load_model():
-    return whisper.load_model("small")  # choose 'base', 'small', 'medium', etc.
+    return WhisperModel("small", device="cpu", compute_type="int8")  # small is enough for CPU
 
 model = load_model()
 
-# Record audio
+# ---------------- Step 1: Record Audio ----------------
 st.subheader("Step 1: Record your voice")
-audio = mic_recorder(
+audio_data = mic_recorder(
     start_prompt="🎤 Start Recording",
     stop_prompt="⏹️ Stop Recording",
     just_once=True,
     use_container_width=True,
 )
 
-if audio:
-    st.audio(audio['bytes'], format="audio/wav")
+if audio_data:
+    st.audio(audio_data['bytes'], format="audio/wav")
+    
+    # ---------------- Step 2: Save temporarily ----------------
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        tmp_file.write(audio_data['bytes'])
+        temp_path = tmp_file.name
 
-    # Save temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
-        temp_audio.write(audio['bytes'])
-        temp_audio_path = temp_audio.name
+    # Optional: convert to mono 16kHz if needed
+    sound = AudioSegment.from_file(temp_path)
+    sound = sound.set_channels(1).set_frame_rate(16000)
+    sound.export(temp_path, format="wav")
 
-    st.subheader("Step 2: Transcribe your audio")
-    if st.button(" Transcribe Now"):
-        with st.spinner("Transcribing... please wait ⏳"):
-            result = model.transcribe(temp_audio_path)
-            st.success(" Transcription Complete!")
-            st.text_area("Transcribed Text:", result["text"], height=200)
-        
-        # cleanup
-        os.remove(temp_audio_path)
+    # ---------------- Step 3: Transcribe ----------------
+    st.subheader("Step 2: Transcribe")
+    if st.button("📝 Transcribe Now"):
+        with st.spinner("Transcribing... ⏳"):
+            segments, info = model.transcribe(temp_path)
+            transcript = " ".join([seg.text for seg in segments])
+            st.success("✅ Transcription Complete!")
+            st.text_area("📝 Transcribed Text:", transcript, height=200)
+
+        # Cleanup temp file
+        os.remove(temp_path)
