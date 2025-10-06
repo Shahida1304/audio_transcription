@@ -7,21 +7,25 @@ import queue
 import threading
 import time
 
-st.set_page_config(page_title="🎙️ Real-Time Whisper Transcription", layout="centered")
-st.title("🗣️ Live Speech-to-Text using Whisper + Streamlit")
+st.set_page_config(page_title="🎙️ Live Whisper Transcription", layout="centered")
+st.title("🗣️ Real-Time Speech-to-Text using Whisper")
 
+# ---------------- Load Whisper ----------------
 @st.cache_resource
 def load_model():
     return WhisperModel("small.en", device="cpu", compute_type="int8")
 
 model = load_model()
 
+
+# ---------------- Audio Processor ----------------
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
         self.audio_buffer = queue.Queue()
         self.transcript = ""
         self.running = True
-        threading.Thread(target=self._transcribe_loop, daemon=True).start()
+        self.thread = threading.Thread(target=self._transcribe_loop, daemon=True)
+        self.thread.start()
 
     def recv_audio_frame(self, frame: av.AudioFrame) -> av.AudioFrame:
         audio = frame.to_ndarray().astype(np.float32).flatten() / 32768.0
@@ -49,22 +53,26 @@ class AudioProcessor(AudioProcessorBase):
     def get_text(self):
         return self.transcript
 
-# ---------------- Streamlit WebRTC ----------------
-try:
-    ctx = webrtc_streamer(
-        key="speech",
-        mode=WebRtcMode.SENDRECV,
-        audio_receiver_size=256,
-        media_stream_constraints={"audio": True, "video": False},
-        audio_processor_factory=AudioProcessor,
-        async_processing=True,
-    )
 
-    if ctx and ctx.audio_processor:
-        st.markdown("🎤 **Listening... start speaking!**")
-        placeholder = st.empty()
-        while True:
-            time.sleep(2)
-            placeholder.markdown(f"**Transcript:** {ctx.audio_processor.get_text()}")
-except Exception as e:
-    st.error(f"⚠️ Stream error handled safely: {e}")
+# ---------------- Streamlit UI ----------------
+ctx = webrtc_streamer(
+    key="speech",
+    mode=WebRtcMode.SENDRECV,
+    audio_receiver_size=256,
+    media_stream_constraints={"audio": True, "video": False},
+    audio_processor_factory=AudioProcessor,
+    async_processing=True,
+)
+
+# Avoid running before context initializes
+if ctx.state.playing and ctx.audio_processor:
+    st.markdown("🎤 **Listening... start speaking!**")
+    placeholder = st.empty()
+
+    # Safe continuous update loop using Streamlit events
+    while ctx.state.playing:
+        time.sleep(1.5)
+        transcript = ctx.audio_processor.get_text()
+        placeholder.markdown(f"**Transcript:** {transcript}")
+else:
+    st.info("Click **Start** above and allow microphone access.")
